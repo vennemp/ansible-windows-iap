@@ -1,0 +1,13 @@
+---
+- name: Test Windows connectivity via IAP tunnel
+  hosts: windows
+  gather_facts: false
+
+  tasks:
+    - name: Ping Windows host
+      ansible.windows.win_ping:
+      register: ping_result
+
+    - name: Show result
+      ansible.builtin.debug:
+        var: ping_result

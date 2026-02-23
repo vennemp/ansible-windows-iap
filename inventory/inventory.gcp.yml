@@ -1,0 +1,25 @@
+---
+plugin: gcp_compute
+projects:
+  - armoryd2v-gss-prod
+auth_kind: application
+scopes:
+  - https://www.googleapis.com/auth/cloud-platform
+  - https://www.googleapis.com/auth/compute.readonly
+filters:
+  - status = RUNNING
+hostnames:
+  - name
+keyed_groups:
+  - key: zone
+  - key: windows_version | default('')
+    prefix: windows_
+    separator: ''
+groups:
+  windows: "disks | map(attribute='licenses', default=[]) | flatten | select('search', 'windows-cloud') | list | length > 0"
+compose:
+  ansible_host: name
+  gcp_instance_name: name
+  gcp_project: project
+  gcp_zone: zone
+  windows_version: "disks | map(attribute='licenses', default=[]) | flatten | select('search', 'windows-cloud') | first | default('') | regex_search('server-(\\d{4})', '\\1') | first | default('')"

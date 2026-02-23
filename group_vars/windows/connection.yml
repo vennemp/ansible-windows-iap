@@ -1,0 +1,8 @@
+ansible_connection: winrm_iap
+ansible_winrm_transport:
+  - ntlm
+ansible_winrm_scheme: https
+ansible_winrm_port: 5986
+ansible_winrm_server_cert_validation: ignore
+ansible_shell_type: powershell
+ansible_iap_tunnel_timeout: 30
