@@ -1,0 +1,44 @@
+namespace: vennemp
+name: windows_iap
+version: 1.0.0
+readme: README.md
+authors:
+  - Matthew Venne
+description: >-
+  Ansible connection plugin for managing Windows VMs on GCP behind
+  Identity-Aware Proxy (IAP). Automatically manages IAP TCP tunnels
+  so WinRM works transparently with hosts that have no public IP.
+license:
+  - Apache-2.0
+license_file: ""
+tags:
+  - gcp
+  - windows
+  - iap
+  - winrm
+  - cloud
+dependencies:
+  ansible.windows: ">=2.0.0"
+repository: https://github.com/gcp-thearmory/ansible-windows-iap
+documentation: https://github.com/gcp-thearmory/ansible-windows-iap
+homepage: https://github.com/gcp-thearmory/ansible-windows-iap
+issues: https://github.com/gcp-thearmory/ansible-windows-iap/issues
+build_ignore:
+  - .git
+  - .gitignore
+  - .DS_Store
+  - .vault_pass
+  - .vscode
+  - .idea
+  - "*.retry"
+  - __pycache__
+  - "*.py[cod]"
+  - ansible.cfg
+  - inventory
+  - group_vars
+  - host_vars
+  - playbooks
+  - scripts
+  - requirements.txt
+  - CLAUDE.md
+  - .claude

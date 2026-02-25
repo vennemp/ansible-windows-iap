@@ -4,7 +4,7 @@ Custom Ansible connection plugin for managing Windows VMs on GCP that sit behind
 
 ## Problem
 
-Windows VMs behind IAP cannot use the SSH wrapper approach that works for Linux (there is no WinRM equivalent of `ssh_executable`). This project provides a `winrm_iap` connection plugin that manages an IAP TCP tunnel per host internally, so Ansible's WinRM transport works transparently.
+Windows VMs behind IAP cannot use the SSH wrapper approach that works for Linux (there is no WinRM equivalent of `ssh_executable`). This collection provides a `winrm_iap` connection plugin that manages an IAP TCP tunnel per host internally, so Ansible's WinRM transport works transparently.
 
 ## How It Works
 
@@ -25,164 +25,84 @@ Ansible Controller                          GCP
 3. WinRM connects to `localhost:<port>` using NTLM over HTTPS
 4. Each Ansible fork gets its own tunnel, so parallel execution works safely
 
-## Requirements
+## Installation
+
+### From Ansible Galaxy
+
+```bash
+ansible-galaxy collection install vennemp.windows_iap
+```
+
+Or add to your `requirements.yml`:
+
+```yaml
+collections:
+  - name: vennemp.windows_iap
+    version: ">=1.0.0"
+```
+
+Then install:
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+The collection depends on `ansible.windows` and will install it automatically.
+
+### From source (this repo)
+
+```bash
+git clone https://github.com/gcp-thearmory/ansible-windows-iap.git
+cd ansible-windows-iap
+ansible-galaxy collection build .
+ansible-galaxy collection install vennemp-windows_iap-*.tar.gz
+```
+
+## Quick Start
+
+### 1. Requirements
 
 - Python 3.10+
 - `gcloud` CLI with IAP tunnel permissions
 - GCP Application Default Credentials (`gcloud auth application-default login`)
-- `google.cloud` and `ansible.windows` Ansible collections
 
-## Project Structure
+### 2. Configure your inventory
 
-```
-plugins/connection/winrm_iap.py     # Connection plugin (core)
-library/gcp_reset_windows_password.py  # Module for password resets
-scripts/reset-windows-password.sh    # Standalone credential bootstrap
-inventory/inventory.gcp.yml         # Dynamic GCP compute inventory
-group_vars/windows/connection.yml   # Shared WinRM/IAP settings
-host_vars/<instance>/vault.yml      # Per-host vault-encrypted credentials
-playbooks/win_ping.yml              # Connectivity test
-playbooks/reset_password.yml        # Reset + vault-store credentials
-```
-
-## Setup
-
-### 1. Install dependencies
-
-```bash
-pip install -r requirements.txt
-ansible-galaxy collection install google.cloud ansible.windows
-```
-
-### 2. Configure inventory
-
-Edit `inventory/inventory.gcp.yml` and replace the placeholder project ID with your GCP project(s):
+Use any inventory format. Each Windows host needs `gcp_project` and `gcp_zone`:
 
 ```yaml
-projects:
-  - my-gcp-project-id
+# inventory/hosts.yml
+all:
+  children:
+    windows:
+      hosts:
+        my-win-vm:
+          gcp_project: my-gcp-project
+          gcp_zone: us-east4-a
 ```
 
-You can list multiple projects. The inventory automatically discovers all running
-Windows VMs by checking the boot disk license for `windows-cloud`. These hosts are
-placed in the `windows` group, which applies the connection settings from
-`group_vars/windows/connection.yml`.
+Or use the `google.cloud.gcp_compute` dynamic inventory plugin to discover VMs automatically (see [Dynamic Inventory](#dynamic-inventory) below).
 
-If you need to narrow the results further, add filters:
+### 3. Set connection variables
 
 ```yaml
-filters:
-  - status = RUNNING
-  - 'name = my-specific-vm'
+# group_vars/windows.yml
+ansible_connection: vennemp.windows_iap.winrm_iap
+ansible_winrm_transport:
+  - ntlm
+ansible_winrm_scheme: https
+ansible_winrm_port: 5986
+ansible_winrm_server_cert_validation: ignore
+ansible_shell_type: powershell
+
+ansible_user: my_admin_user
+ansible_password: "{{ vault_windows_password }}"
 ```
 
-Verify the inventory works:
+### 4. Test connectivity
 
 ```bash
-ansible-inventory --list
-```
-
-You should see your Windows VMs listed under the `windows` group with `gcp_project`,
-`gcp_zone`, and `gcp_instance_name` vars populated.
-
-The inventory also extracts the Windows Server version year from the boot disk license
-(e.g. `2022`, `2025`) into a `windows_version` host var and creates keyed groups like
-`windows_2025`. You can use these to target specific OS versions:
-
-```bash
-ansible-playbook playbooks/win_ping.yml --limit windows_2025
-```
-
-### 3. Create a vault password file
-
-The vault password is used to encrypt and decrypt per-host credentials stored under
-`host_vars/`. Create a `.vault_pass` file in the project root (it is git-ignored):
-
-```bash
-# Use a strong, random password
-openssl rand -base64 32 > .vault_pass
-chmod 600 .vault_pass
-```
-
-### 4. Configure Windows credentials
-
-Before Ansible can connect to a Windows VM, it needs a username and password.
-Choose the approach that matches your environment:
-
-#### Option A: Domain-joined hosts (shared credential)
-
-If your Windows hosts are domain-joined, you can use a single domain admin
-credential for all hosts. Create a vault-encrypted file in `group_vars/windows/`:
-
-```bash
-ansible-vault create group_vars/windows/vault.yml
-```
-
-Add the domain credentials:
-
-```yaml
-ansible_user: DOMAIN\admin_username
-ansible_password: your_domain_password
-```
-
-Save and close. The credentials will apply to all hosts in the `windows` group.
-To edit later:
-
-```bash
-ansible-vault edit group_vars/windows/vault.yml
-```
-
-#### Option B: Standalone hosts (per-host credentials)
-
-For hosts that are not domain-joined, use `gcloud compute reset-windows-password`
-to generate a local account. The `reset_password.yml` playbook automates this and
-stores the credentials in a vault-encrypted file at `host_vars/<instance>/vault.yml`.
-
-Run it against the hosts you want to manage:
-
-```bash
-ansible-playbook playbooks/reset_password.yml --limit <hostname>
-```
-
-This will:
-
-1. Call `gcloud compute reset-windows-password` to generate a new password
-2. Write `ansible_user` and `ansible_password` to `host_vars/<hostname>/vault.yml`
-3. Encrypt the file with `ansible-vault` using `.vault_pass`
-
-You can also use the standalone script for a single host:
-
-```bash
-./scripts/reset-windows-password.sh \
-  --instance <vm-name> \
-  --zone <zone> \
-  --project <project-id> \
-  --vault-password-file .vault_pass
-```
-
-### 5. Test connectivity
-
-```bash
-# Verify the connection plugin is discovered
-ansible-doc -t connection winrm_iap
-
-# Test WinRM connectivity through IAP
-ansible-playbook playbooks/win_ping.yml --limit <hostname>
-```
-
-A successful run looks like:
-
-```
-TASK [Ping Windows host] ****************************************************
-ok: [my-win-vm]
-
-TASK [Show result] ***********************************************************
-ok: [my-win-vm] => {
-    "ping_result": {
-        "changed": false,
-        "ping": "pong"
-    }
-}
+ansible windows -m ansible.windows.win_ping -i inventory/hosts.yml
 ```
 
 ## Connection Plugin Options
@@ -197,8 +117,97 @@ ok: [my-win-vm] => {
 
 All standard `ansible_winrm_*` options are also supported (inherited from the built-in `winrm` plugin).
 
+## Included Content
+
+### Connection Plugins
+
+| Name | Description |
+|------|-------------|
+| `vennemp.windows_iap.winrm_iap` | WinRM connection through a GCP IAP tunnel |
+
+### Modules
+
+| Name | Description |
+|------|-------------|
+| `vennemp.windows_iap.gcp_reset_windows_password` | Reset a Windows VM password via `gcloud` and optionally vault-encrypt credentials |
+
+## Dynamic Inventory
+
+You can use the `google.cloud.gcp_compute` inventory plugin to discover Windows VMs automatically:
+
+```yaml
+# inventory/gcp.yml
+plugin: gcp_compute
+projects:
+  - my-gcp-project
+auth_kind: application
+filters:
+  - status = RUNNING
+hostnames:
+  - name
+groups:
+  windows: >-
+    disks | map(attribute='licenses', default=[])
+    | flatten | select('search', 'windows-cloud')
+    | list | length > 0
+compose:
+  ansible_host: name
+  gcp_instance_name: name
+  gcp_project: project
+  gcp_zone: zone
+```
+
+This requires the `google.cloud` collection:
+
+```bash
+ansible-galaxy collection install google.cloud
+```
+
 ## Notes
 
 - **Cert validation** is automatically disabled by the plugin because the Windows cert is issued for the VM hostname, not `localhost`
 - **Transport** is NTLM over HTTPS (port 5986) by default
 - **macOS**: the plugin sets `NO_PROXY=localhost` to prevent a fork-safety crash in macOS's system proxy detection (`_scproxy`)
+
+## Development
+
+The repo includes operational files (inventory, playbooks, vault configs) alongside the collection source. These are excluded from the published collection via `build_ignore` in `galaxy.yml`.
+
+### Project Structure
+
+```
+galaxy.yml                              # Collection metadata
+meta/runtime.yml                        # Ansible version requirements
+plugins/
+  connection/winrm_iap.py              # Connection plugin
+  modules/gcp_reset_windows_password.py # Password reset module
+ansible.cfg                             # Local development config
+inventory/                              # Dynamic GCP inventory configs
+group_vars/                             # Shared connection settings
+host_vars/                              # Per-host vault-encrypted credentials
+playbooks/                              # Operational playbooks
+scripts/                                # Standalone helper scripts
+```
+
+### Building locally
+
+```bash
+ansible-galaxy collection build .
+# produces vennemp-windows_iap-1.0.0.tar.gz
+```
+
+### Running playbooks from this repo
+
+The `ansible.cfg` sets up local plugin paths so you can use short names without installing the collection:
+
+```bash
+# Test connectivity
+ansible-playbook playbooks/win_ping.yml --limit <hostname>
+
+# Reset a Windows password
+ansible-playbook playbooks/reset_password.yml --limit <hostname>
+```
+
+## License
+
+Apache-2.0

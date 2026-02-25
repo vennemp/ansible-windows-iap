@@ -23,6 +23,9 @@ host_vars/*/vault.yml
 *.swo
 *~
 
+# Collection build artifacts
+*.tar.gz
+
 # OS
 .DS_Store
 Thumbs.db

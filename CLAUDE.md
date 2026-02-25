@@ -4,13 +4,19 @@ Custom Ansible connection plugin for managing Windows VMs on GCP behind Identity
 
 ## Project Structure
 
+This repo is an Ansible Galaxy collection monorepo (`vennemp.windows_iap`).
+
+- `galaxy.yml` - Collection metadata for Ansible Galaxy
+- `meta/runtime.yml` - Ansible version requirements
 - `plugins/connection/winrm_iap.py` - Custom connection plugin subclassing the built-in `winrm` plugin
-- `library/gcp_reset_windows_password.py` - Custom module for resetting Windows passwords via `gcloud`
+- `plugins/modules/gcp_reset_windows_password.py` - Custom module for resetting Windows passwords via `gcloud`
 - `scripts/reset-windows-password.sh` - Standalone credential bootstrap script
 - `inventory/` - Dynamic GCP compute inventory files per environment (`*.gcp.yml`)
 - `group_vars/windows/connection.yml` - Shared WinRM/IAP connection settings
 - `host_vars/<instance>/vault.yml` - Per-host vault-encrypted credentials
 - `playbooks/` - Operational playbooks
+
+Operational files (inventory, playbooks, group_vars, etc.) are excluded from the published collection via `build_ignore` in `galaxy.yml`.
 
 ## Key Commands
 
@@ -18,8 +24,11 @@ Custom Ansible connection plugin for managing Windows VMs on GCP behind Identity
 # Always cd into this directory before running commands
 cd ~/github/ansible-windows-iap
 
-# Verify plugin discovery
+# Verify plugin discovery (local dev)
 ansible-doc -t connection winrm_iap
+
+# Build collection tarball
+ansible-galaxy collection build .
 
 # Check inventory (requires GCP Application Default Credentials)
 ansible-inventory -i inventory/staging.gcp.yml --list

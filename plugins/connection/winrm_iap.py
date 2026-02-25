@@ -153,7 +153,8 @@ DOCUMENTATION = r"""
 
 EXAMPLES = r"""
 # group_vars/windows/connection.yml
-ansible_connection: winrm_iap
+# Use the FQCN when installed from Galaxy:
+ansible_connection: vennemp.windows_iap.winrm_iap
 ansible_winrm_transport: [ntlm]
 ansible_winrm_scheme: https
 ansible_winrm_port: 5986
@@ -165,9 +166,9 @@ all:
   children:
     windows:
       hosts:
-        ripcord-staging-win-01:
-          gcp_instance_name: ripcord-staging-win-01
-          gcp_project: armory-ripcord-staging
+        my-win-vm:
+          gcp_instance_name: my-win-vm
+          gcp_project: my-gcp-project
           gcp_zone: us-east4-a
 """
 
