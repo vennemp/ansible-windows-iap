@@ -5,4 +5,7 @@ ansible_winrm_scheme: https
 ansible_winrm_port: 5986
 ansible_winrm_server_cert_validation: ignore
 ansible_shell_type: powershell
-ansible_iap_tunnel_timeout: 30
+ansible_iap_tunnel_timeout: 60
+ansible_winrm_connection_timeout: 120
+ansible_winrm_operation_timeout_sec: 120
+ansible_winrm_read_timeout_sec: 150
