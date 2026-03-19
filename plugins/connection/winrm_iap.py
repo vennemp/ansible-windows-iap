@@ -59,6 +59,14 @@ DOCUMENTATION = r"""
         vars:
             - name: ansible_iap_tunnel_timeout
         type: int
+      iap_tunnel_retries:
+        description:
+            - Number of times to retry starting the IAP tunnel if the local port
+              is already in use or the tunnel exits unexpectedly before binding.
+        default: 3
+        vars:
+            - name: ansible_iap_tunnel_retries
+        type: int
       remote_addr:
         description:
             - Address of the windows machine.
@@ -178,6 +186,7 @@ import select
 import signal
 import socket
 import subprocess
+import time
 import typing as t
 
 from ansible.errors import AnsibleConnectionFailure, AnsibleError
@@ -204,8 +213,97 @@ class Connection(WinRMConnection):
             return name
         return self.get_option('remote_addr') or self._play_context.remote_addr
 
+    def _attempt_iap_tunnel(self, instance: str, cmd: list, remote_port: int, timeout: int) -> int:
+        """Single attempt to start an IAP tunnel. Returns local port on success.
+
+        Raises AnsibleConnectionFailure on failure so the caller can retry.
+        """
+        self._iap_tunnel_proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+        port_re = re.compile(r'(?:Listening on port|Picking local unused port) \[(\d+)\]')
+        port_in_use_re = re.compile(r'(?:address already in use|port.*in use|bind.*failed)', re.IGNORECASE)
+        collected_stderr = []
+        local_port = None
+        deadline = time.time() + timeout
+
+        # Phase 1: read stderr until we see the port number.
+        while time.time() < deadline:
+            if self._iap_tunnel_proc.poll() is not None:
+                remaining = self._iap_tunnel_proc.stderr.read().decode('utf-8', errors='replace')
+                collected_stderr.append(remaining)
+                stderr_text = ''.join(collected_stderr)
+                if port_in_use_re.search(stderr_text):
+                    raise AnsibleConnectionFailure(
+                        "IAP tunnel port already in use (rc=%d): %s"
+                        % (self._iap_tunnel_proc.returncode, stderr_text)
+                    )
+                raise AnsibleConnectionFailure(
+                    "IAP tunnel process exited unexpectedly (rc=%d): %s"
+                    % (self._iap_tunnel_proc.returncode, stderr_text)
+                )
+
+            ready, _, _ = select.select(
+                [self._iap_tunnel_proc.stderr], [], [], 1.0
+            )
+            if ready:
+                line = self._iap_tunnel_proc.stderr.readline().decode(
+                    'utf-8', errors='replace'
+                )
+                if not line:
+                    continue
+                collected_stderr.append(line)
+                display.vvvv("WINRM_IAP tunnel stderr: %s" % line.strip(), host=instance)
+                m = port_re.search(line)
+                if m:
+                    local_port = int(m.group(1))
+                    break
+
+        if local_port is None:
+            self._stop_iap_tunnel()
+            raise AnsibleConnectionFailure(
+                "Timed out waiting for IAP tunnel port after %ds. Stderr: %s"
+                % (timeout, ''.join(collected_stderr))
+            )
+
+        # Phase 2: poll until the local port accepts TCP connections.
+        while time.time() < deadline:
+            if self._iap_tunnel_proc.poll() is not None:
+                raise AnsibleConnectionFailure(
+                    "IAP tunnel died while waiting for port to become ready (rc=%d)"
+                    % self._iap_tunnel_proc.returncode
+                )
+            try:
+                sock = socket.create_connection(('localhost', local_port), timeout=1)
+                sock.close()
+                display.vvv(
+                    "WINRM_IAP: tunnel ready on localhost:%d -> %s:%s"
+                    % (local_port, instance, remote_port),
+                    host=instance,
+                )
+                self._iap_local_port = local_port
+                return local_port
+            except OSError:
+                time.sleep(0.5)
+
+        # Timeout reached in phase 2
+        self._stop_iap_tunnel()
+        raise AnsibleConnectionFailure(
+            "Timed out waiting for IAP tunnel after %ds. Stderr: %s"
+            % (timeout, ''.join(collected_stderr))
+        )
+
     def _start_iap_tunnel(self) -> int:
-        """Start a gcloud IAP tunnel and return the local port."""
+        """Start a gcloud IAP tunnel and return the local port.
+
+        Retries up to C(iap_tunnel_retries) times if the port selected by IAP
+        is already in use on the local machine.
+        """
         if self._iap_tunnel_proc and self._iap_tunnel_proc.poll() is None:
             return self._iap_local_port
 
@@ -214,6 +312,7 @@ class Connection(WinRMConnection):
         zone = self.get_option('gcp_zone')
         remote_port = self.get_option('port') or 5986
         timeout = self.get_option('iap_tunnel_timeout') or 30
+        max_retries = self.get_option('iap_tunnel_retries') or 3
 
         if not project:
             raise AnsibleError("gcp_project is required for winrm_iap connection")
@@ -232,82 +331,26 @@ class Connection(WinRMConnection):
         if sa:
             cmd.extend(['--impersonate-service-account', sa])
 
-        display.vvv(
-            "WINRM_IAP: starting tunnel: %s" % ' '.join(cmd),
-            host=instance,
-        )
-
-        self._iap_tunnel_proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-
-        # Wait for the tunnel to report the listening port on stderr, then
-        # poll the port until it accepts connections.
-        port_re = re.compile(r'(?:Listening on port|Picking local unused port) \[(\d+)\]')
-        collected_stderr = []
-        deadline = __import__('time').time() + timeout
-
-        # Phase 1: read stderr until we see the port number.
-        while __import__('time').time() < deadline:
-            if self._iap_tunnel_proc.poll() is not None:
-                remaining = self._iap_tunnel_proc.stderr.read().decode('utf-8', errors='replace')
-                collected_stderr.append(remaining)
-                raise AnsibleConnectionFailure(
-                    "IAP tunnel process exited unexpectedly (rc=%d): %s"
-                    % (self._iap_tunnel_proc.returncode, ''.join(collected_stderr))
-                )
-
-            ready, _, _ = select.select(
-                [self._iap_tunnel_proc.stderr], [], [], 1.0
-            )
-            if ready:
-                line = self._iap_tunnel_proc.stderr.readline().decode(
-                    'utf-8', errors='replace'
-                )
-                if not line:
-                    continue
-                collected_stderr.append(line)
-                display.vvvv("WINRM_IAP tunnel stderr: %s" % line.strip(), host=instance)
-                m = port_re.search(line)
-                if m:
-                    self._iap_local_port = int(m.group(1))
-                    break
-
-        if self._iap_local_port is None:
-            self._stop_iap_tunnel()
-            raise AnsibleConnectionFailure(
-                "Timed out waiting for IAP tunnel port after %ds. Stderr: %s"
-                % (timeout, ''.join(collected_stderr))
-            )
-
-        # Phase 2: poll until the local port accepts TCP connections.
-        while __import__('time').time() < deadline:
-            if self._iap_tunnel_proc.poll() is not None:
-                raise AnsibleConnectionFailure(
-                    "IAP tunnel died while waiting for port to become ready (rc=%d)"
-                    % self._iap_tunnel_proc.returncode
-                )
-            try:
-                sock = socket.create_connection(('localhost', self._iap_local_port), timeout=1)
-                sock.close()
+        last_error: Exception | None = None
+        for attempt in range(1, max_retries + 1):
+            if attempt > 1:
                 display.vvv(
-                    "WINRM_IAP: tunnel ready on localhost:%d -> %s:%s"
-                    % (self._iap_local_port, instance, remote_port),
+                    "WINRM_IAP: retrying tunnel (attempt %d/%d) after: %s"
+                    % (attempt, max_retries, last_error),
                     host=instance,
                 )
-                return self._iap_local_port
-            except OSError:
-                __import__('time').sleep(0.5)
+            display.vvv(
+                "WINRM_IAP: starting tunnel: %s" % ' '.join(cmd),
+                host=instance,
+            )
+            try:
+                return self._attempt_iap_tunnel(instance, cmd, remote_port, timeout)
+            except AnsibleConnectionFailure as exc:
+                self._stop_iap_tunnel()
+                last_error = exc
 
-        # Timeout reached
-        self._stop_iap_tunnel()
         raise AnsibleConnectionFailure(
-            "Timed out waiting for IAP tunnel after %ds. Stderr: %s"
-            % (timeout, ''.join(collected_stderr))
+            "IAP tunnel failed after %d attempt(s): %s" % (max_retries, last_error)
         )
 
     def _stop_iap_tunnel(self) -> None:
