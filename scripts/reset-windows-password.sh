@@ -13,7 +13,7 @@ Required:
   --project PROJECT        GCP project ID
 
 Optional:
-  --user USERNAME          Windows username (default: ansible_admin)
+  --user USERNAME          Windows username (default: let gcloud choose)
   --vault-password-file F  Path to vault password file (default: .vault_pass)
   --host-vars-dir DIR      Base directory for host_vars (default: host_vars)
   -h, --help               Show this help message
@@ -24,7 +24,7 @@ EOF
 INSTANCE=""
 ZONE=""
 PROJECT=""
-USER="ansible_admin"
+USER=""
 VAULT_PASSWORD_FILE=".vault_pass"
 HOST_VARS_DIR="host_vars"
 
@@ -51,10 +51,17 @@ if [[ ! -f "$VAULT_PASSWORD_FILE" ]]; then
     exit 1
 fi
 
-echo "Resetting password for $USER on $INSTANCE ($PROJECT / $ZONE)..."
+USER_ARGS=()
+USER_DISPLAY="<gcloud default>"
+if [[ -n "$USER" ]]; then
+    USER_ARGS=(--user "$USER")
+    USER_DISPLAY="$USER"
+fi
+
+echo "Resetting password for $USER_DISPLAY on $INSTANCE ($PROJECT / $ZONE)..."
 
 RESULT=$(gcloud compute reset-windows-password "$INSTANCE" \
-    --user "$USER" \
+    "${USER_ARGS[@]}" \
     --zone "$ZONE" \
     --project "$PROJECT" \
     --format json \

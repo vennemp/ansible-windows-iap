@@ -26,8 +26,10 @@ options:
         required: true
         type: str
     user:
-        description: The Windows username to reset the password for.
-        default: ansible_admin
+        description:
+            - The Windows username to reset the password for.
+            - When omitted, C(gcloud) chooses the default username associated
+              with the authenticated account email address.
         type: str
     vault_encrypt:
         description: Whether to write vault-encrypted credentials to host_vars.
@@ -52,7 +54,7 @@ EXAMPLES = r"""
     instance_name: ripcord-staging-win-01
     project: armory-ripcord-staging
     zone: us-east4-a
-    user: ansible_admin
+    user: custom_admin
     vault_encrypt: true
     vault_password_file: .vault_pass
   delegate_to: localhost
@@ -80,10 +82,23 @@ vault_file:
 
 import json
 import os
-import subprocess
 import tempfile
 
 from ansible.module_utils.basic import AnsibleModule
+
+
+def build_reset_windows_password_cmd(instance, project, zone, user=None):
+    cmd = [
+        'gcloud', 'compute', 'reset-windows-password',
+        instance,
+        '--zone', zone,
+        '--project', project,
+        '--format', 'json',
+        '--quiet',
+    ]
+    if user:
+        cmd[4:4] = ['--user', user]
+    return cmd
 
 
 def run_module():
@@ -91,7 +106,7 @@ def run_module():
         instance_name=dict(type='str', required=True),
         project=dict(type='str', required=True),
         zone=dict(type='str', required=True),
-        user=dict(type='str', default='ansible_admin'),
+        user=dict(type='str', default=None),
         vault_encrypt=dict(type='bool', default=False),
         vault_password_file=dict(type='str', default=None),
         host_vars_dir=dict(type='str', default='host_vars'),
@@ -116,15 +131,7 @@ def run_module():
     if vault_password_file:
         vault_password_file = os.path.abspath(os.path.expanduser(vault_password_file))
 
-    cmd = [
-        'gcloud', 'compute', 'reset-windows-password',
-        instance,
-        '--user', user,
-        '--zone', zone,
-        '--project', project,
-        '--format', 'json',
-        '--quiet',
-    ]
+    cmd = build_reset_windows_password_cmd(instance, project, zone, user)
 
     rc, stdout, stderr = module.run_command(cmd)
     if rc != 0:

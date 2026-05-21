@@ -99,6 +99,12 @@ ansible_user: my_admin_user
 ansible_password: "{{ vault_windows_password }}"
 ```
 
+If you reset passwords with the included playbook or module, `ansible_user`
+can be omitted. In that case `gcloud compute reset-windows-password` chooses
+the default Windows username derived from your authenticated account email
+address, and the returned username is written back to host vars as
+`ansible_user`.
+
 ### 4. Test connectivity
 
 ```bash
@@ -115,7 +121,7 @@ ansible windows -m ansible.windows.win_ping -i inventory/hosts.yml
 | `gcp_iap_service_account` | `ansible_gcp_iap_service_account` | No | - | SA for impersonation |
 | `iap_tunnel_timeout` | `ansible_iap_tunnel_timeout` | No | `30` | Tunnel ready timeout (seconds) |
 
-All standard `ansible_winrm_*` options are also supported (inherited from the built-in `winrm` plugin).
+All standard `ansible_winrm_*` options are also supported (inherited from the built-in `winrm` plugin), including `ansible_user` / `ansible_winrm_user` for the Windows login.
 
 ## Included Content
 

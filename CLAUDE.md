@@ -37,6 +37,7 @@ ansible-inventory -i inventory/staging.gcp.yml --list
 ./scripts/reset-windows-password.sh \
   --instance <vm> --zone <zone> --project <project> \
   --vault-password-file .vault_pass
+# Add --user <windows-user> only when overriding gcloud's default username.
 
 # Test connectivity (always staging first)
 ansible-playbook playbooks/win_ping.yml -i inventory/staging.gcp.yml --limit <host>
